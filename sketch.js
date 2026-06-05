@@ -32,6 +32,11 @@ let problemWon = false;  // 當前題目是否成功
 
 let starEffect = { active: false, startTime: 0, duration: 600 }; // 星星特效狀態
 let perfectEffect = { active: false, startTime: 0, duration: 800, x: 0, y: 0, points: 0 }; // Perfect 文字特效
+let missEffect = { active: false, startTime: 0, duration: 800, x: 0, y: 0 }; // Miss 文字特效
+
+let gameOver = false; // 遊戲是否結束
+let finalScore = 0; // 最終分數
+let finalRating = ""; // 最終評價
 
 // -------- 第三關 --------
 let items = [];
@@ -108,6 +113,7 @@ function draw() {
   if (stage === 4) drawStage2();     // 第二關遊玩 (原 stage 3)
   if (stage === 5) drawStage3Intro(); // 第三關說明 (新增)
   if (stage === 6) drawStage3();     // 第三關遊玩
+  if (stage === 7) drawGameOver();   // 遊戲結束畫面
 
   // 繪製紅光閃爍處罰效果 (放在 UI 之前，確保不會遮擋 UI 文字太久)
   if (flashRed > 0) {
@@ -251,20 +257,39 @@ function drawStage1Intro() {
   text("按下 [ 空白鍵 ] 正式開始", width / 2, height / 2 + 160);
 }
 
-function keyPressed() {
-  if (stage === 0 && keyCode === 32) {
+function handleStartInput(isSpacebarOrClick, isRKey = false) {
+  if (stage === 0 && isSpacebarOrClick) {
     stage = 1;
-  } else if (stage === 1 && keyCode === 32) { // 從第一關說明進入第一關遊玩
+  } else if (stage === 1 && isSpacebarOrClick) { // 從第一關說明進入第一關遊玩
     stage = 2;
     startStage1();
-  } else if (stage === 3 && keyCode === 32) { // 從第二關說明進入第二關遊玩
+  } else if (stage === 3 && isSpacebarOrClick) { // 從第二關說明進入第二關遊玩
     problemCount = 0;
     stage = 4;
     startStage2();
-  } else if (stage === 5 && keyCode === 32) { // 從第三關說明進入第三關遊玩
+  } else if (stage === 5 && isSpacebarOrClick) { // 從第三關說明進入第三關遊玩
     stage = 6;
     startStage3();
+  } else if (stage === 7) { // 遊戲結束畫面
+    if (isRKey) { // 重新開始第三關
+      stage = 6;
+      startStage3();
+    } else if (isSpacebarOrClick) { // 從頭開始
+      resetGame();
+    }
   }
+}
+
+function keyPressed() {
+  if (keyCode === 32) {
+    handleStartInput(true);
+  } else if (stage === 7 && (key === 'r' || key === 'R')) {
+    handleStartInput(false, true); // Pass true for isRKey
+  }
+}
+
+function mouseClicked() {
+  handleStartInput(true);
 }
 
 // ================= STAGE 2 INTRO =================
@@ -553,12 +578,19 @@ function startStage3() {
   let noteTravelTime = 2500; // 音符從頂部到底部花費的時間 (毫秒)
   let hitLineY = height * 0.8;
   
-  // 產生 10 個節奏音符
-  for (let i = 0; i < 10; i++) {
+  let currentTimeOffset = 4000; // 初始等待時間增加到 4 秒，讓開局更輕鬆
+
+  // 產生 12 個節奏音符 (稍微增加數量增加挑戰感)
+  for (let i = 0; i < 12; i++) {
     let gIdx = floor(random(gestures.length));
     // 將四種手勢映射到四條垂直軌道
     let trackX = map(gIdx, 0, gestures.length - 1, width * 0.2, width * 0.8);
-    let targetArrivalTime = millis() + 3000 + i * 1500; // 從 3 秒後開始第一個音符
+
+    // 難度曲線：從 2.2 秒的間隔逐漸縮短到 1.2 秒，並加上隨機波動
+    let baseInterval = map(i, 0, 11, 2200, 1200); 
+    let interval = baseInterval + random(-400, 400); 
+    
+    let targetArrivalTime = millis() + currentTimeOffset;
     items.push({
       x: trackX,
       y: -300,
@@ -569,6 +601,8 @@ function startStage3() {
       collected: false,
       missed: false
     });
+
+    currentTimeOffset += interval; // 累加隨機間隔到下一個音符
   }
 }
 
@@ -653,6 +687,12 @@ function drawStage3() {
       if (now > item.targetArrivalTime + 100 && !item.collected) { // 給予 100ms 緩衝時間判斷是否漏掉
         item.missed = true;
         combo = 0; // 漏掉音符重置連擊
+        
+        // 觸發 Miss 文字特效
+        missEffect.active = true;
+        missEffect.startTime = millis();
+        missEffect.x = item.x;
+        missEffect.y = hitLineY;
         flashRed = 120; // 觸發紅光閃爍
       }
     }
@@ -679,20 +719,93 @@ function drawStage3() {
     }
   }
 
+  // 繪製 Miss 文字特效
+  if (missEffect.active) {
+    let elapsed = millis() - missEffect.startTime;
+    if (elapsed < missEffect.duration) {
+      let progress = elapsed / missEffect.duration;
+      let alpha = map(progress, 0.6, 1, 255, 0, true); // 最後 40% 的時間淡出
+      let yOffset = progress * -60; // 向上漂浮
+      
+      push();
+      textAlign(CENTER, CENTER);
+      textSize(45);
+      fill(255, 0, 0, alpha); // 紅色文字
+      drawingContext.shadowBlur = 25;
+      drawingContext.shadowColor = color(255, 0, 0);
+      text("Miss!", missEffect.x, missEffect.y + yOffset);
+      pop();
+    } else {
+      missEffect.active = false;
+    }
+  }
+
   // 檢查是否全部音符都處理完了
   let finished = items.every(item => item.collected || item.missed);
-  if (finished) {
-    textSize(60);
-    fill(255, 255, 0);
-    drawingContext.shadowBlur = 20;
-    drawingContext.shadowColor = color(255, 255, 0);
-    text("🎉 挑戰結束！ 總共擊中: " + collected, width / 2, height / 2);
-    drawingContext.shadowBlur = 0;
+  if (finished && !gameOver) {
+    gameOver = true;
+    finalScore = score;
+    let hitRate = collected / items.length;
+    if (hitRate >= 0.9) finalRating = "Excellent!";
+    else if (hitRate >= 0.7) finalRating = "Good!";
+    else finalRating = "Bad!";
+    stage = 7; // 進入遊戲結束畫面
   }
+}
+
+// ================= GAME OVER =================
+function drawGameOver() {
+  background(10, 10, 25);
+
+  // 背景動畫：漂浮旋轉的手勢符號
+  push();
+  for (let i = 0; i < 15; i++) {
+    // 使用 noise 產生平滑且隨機的運動軌跡
+    let nx = noise(i * 10, frameCount * 0.005) * width * 1.2 - width * 0.1;
+    let ny = noise(i * 10 + 50, frameCount * 0.005) * height * 1.2 - height * 0.1;
+    let rot = frameCount * 0.01 + i;
+    let g = gestures[i % gestures.length];
+    
+    push();
+    translate(nx, ny);
+    rotate(rot);
+    textSize(40 + noise(i * 5, frameCount * 0.01) * 60);
+    fill(255, 20); // 設定極低不透明度，作為背景裝飾
+    text(g, 0, 0);
+    pop();
+  }
+  pop();
+
+  // 遊戲結束 UI 內容
+  drawingContext.shadowBlur = 30;
+  drawingContext.shadowColor = color(0, 255, 255);
+  fill(255);
+  textSize(80);
+  text("遊戲結束！", width / 2, height / 2 - 100);
+
+  textSize(40);
+  text("最終分數：" + finalScore, width / 2, height / 2);
+  text("評價：" + finalRating, width / 2, height / 2 + 60);
+
+  textSize(24);
+  text("按下 [ R ] 重新開始第三關 或 按下 [ 空白鍵 ] 從頭開始", width / 2, height / 2 + 150);
+  drawingContext.shadowBlur = 0;
+}
+
+// ================= RESET GAME =================
+function resetGame() {
+  stage = 0;
+  score = 0;
+  completedGestures.clear();
+  problemCount = 0;
+  gameOver = false;
+  showSuccess = false;
 }
 
 // ================= UI =================
 function drawUI() {
+  if (stage === 7) return; // 遊戲結束畫面隱藏頂部 UI
+
   drawingContext.shadowBlur = 10;
   drawingContext.shadowColor = color(0);
   fill(255);
@@ -702,7 +815,7 @@ function drawUI() {
   
   // 轉換顯示關卡 (讓說明面不影響關卡數字)
   let displayStage = stage === 0 ? 0 : (stage <= 2 ? 1 : (stage <= 4 ? 2 : 3));
-  text("🏆 關卡：" + displayStage, 30, 65);
+  text("🏆 關卡：" + displayStage, 30, 65); //
   drawingContext.shadowBlur = 0;
   textAlign(CENTER, CENTER);
 }
