@@ -25,7 +25,7 @@ let displayedTargets = []; // 新增：用於顯示問號或已完成的手勢
 let roundIndex = 0;        // 當前題目中比到第幾個手勢
 let currentTarget = "";    // 當前目標手勢
 let playStartTime = 0;   // 答題開始時間
-let playLimit = 10000;   // 每題 (三個手勢) 限制時間 (毫秒)
+let playLimit = 15000;   // 每題 (三個手勢) 限制時間 (毫秒)
 let holdStartTime = 0;   // 開始保持手勢的時間
 const holdDuration = 800; // 保持手勢的持續時間 (毫秒)
 let problemWon = false;  // 當前題目是否成功
@@ -43,6 +43,8 @@ let items = [];
 let collected = 0;
 let combo = 0; // 連擊計數器
 let noteSpeed = 3; // 音符掉落速度
+let currentSubStage = 1; // 1: 基礎, 2: 進階
+let stage3Score = 0;    // 第三關專用得分
 
 let problemCount = 0;    // 已挑戰的題目數量
 let bgParticles = []; // 背景裝飾粒子
@@ -364,9 +366,11 @@ function drawStage1() {
     }
   }
 
-  fill(255); // 恢復不透明度，繪製中間的大手勢
-  textSize(80);
-  text(currentGesture, width / 2, height / 2);
+  if (!showSuccess) {
+    fill(255); // 恢復不透明度，繪製中間的大手勢
+    textSize(80);
+    text(currentGesture, width / 2, height / 2);
+  }
 
   let g = getGesture();
 
@@ -376,6 +380,10 @@ function drawStage1() {
       showSuccess = true;
       successTime = millis();
       completedGestures.add(currentGesture); // 紀錄成功完成的手勢
+      
+      // 觸發星星特效
+      starEffect.active = true;
+      starEffect.startTime = millis();
     }
   } else if (g && g !== "未定義" && g !== "pinch" && !showSuccess) {
     // 若沒有比出正確手勢，直接給予提示
@@ -390,11 +398,41 @@ function drawStage1() {
   }
 
   if (showSuccess) {
-    textSize(30);
-    fill(0, 200, 0);
-    text("✔ 正確！", width / 2, height / 2 + 100);
+    let waitTime = 1500; // 延長過場時間至 1.5 秒
+    let elapsed = millis() - successTime;
+    let progress = elapsed / waitTime;
 
-    if (millis() - successTime > 1000) {
+    // --- 新增：彩色背景擴散環動畫 ---
+    push();
+    noFill();
+    ellipseMode(CENTER);
+    for (let i = 0; i < 4; i++) {
+      let rSize = map(progress, 0, 1, 0, width * 1.5) + (i * 200);
+      let rAlpha = map(progress, 0, 1, 180, 0);
+      if (rAlpha > 0) {
+        strokeWeight(50);
+        // 使用 HSB 模式產生霓虹色彩
+        colorMode(HSB, 360, 100, 100, 255);
+        let h = (successTime / 10 + i * 45 + frameCount * 5) % 360;
+        stroke(h, 80, 100, rAlpha);
+        ellipse(width / 2, height / 2, rSize);
+      }
+    }
+    pop(); // pop 會自動恢復預設的 RGB 模式
+
+    push();
+    textSize(30);
+    fill(0, 255, 150);
+    drawingContext.shadowBlur = 20;
+    drawingContext.shadowColor = color(0, 255, 150);
+    text("🌟 模仿成功！ 🌟", width / 2, height / 2 + 100);
+    
+    textSize(22);
+    fill(255);
+    text("準備下一個手勢...", width / 2, height / 2 + 150);
+    pop();
+
+    if (elapsed > waitTime) {
       showSuccess = false;
       // 如果四種都比過了，才進下一關
       if (completedGestures.size >= 4) {
@@ -403,6 +441,26 @@ function drawStage1() {
       } else {
         startStage1();
       }
+    }
+  }
+
+  // 在第一關繪製星星特效
+  if (starEffect.active) {
+    let elapsed = millis() - starEffect.startTime;
+    if (elapsed < starEffect.duration) {
+      let progress = elapsed / starEffect.duration;
+      let s = sin(progress * PI) * 2.5; 
+      push();
+      translate(width / 2, height / 2);
+      scale(s);
+      drawingContext.shadowBlur = 35;
+      drawingContext.shadowColor = color(255, 255, 0);
+      textSize(50);
+      fill(255, 255, 0, map(progress, 0.7, 1, 255, 0));
+      text("⭐", 0, 0);
+      pop();
+    } else {
+      starEffect.active = false;
     }
   }
 }
@@ -569,41 +627,58 @@ function drawStage2() {
 }
 
 // ================= STAGE 3 =================
-function startStage3() {
+function startStage3(sub = 1) {
+  currentSubStage = sub;
   items = [];
-  collected = 0;
-  combo = 0; // 重置連擊
+  if (sub === 1) {
+    collected = 0;
+    stage3Score = 0;
+    combo = 0;
+  }
   showSuccess = false;
   
-  let noteTravelTime = 2500; // 音符從頂部到底部花費的時間 (毫秒)
+  // 基礎關(sub 1)速度放慢到 4000ms，進階關恢復 2500ms
+  let noteTravelTime = sub === 1 ? 4000 : 2500; 
   let hitLineY = height * 0.8;
-  
   let currentTimeOffset = 4000; // 初始等待時間增加到 4 秒，讓開局更輕鬆
 
-  // 產生 12 個節奏音符 (稍微增加數量增加挑戰感)
-  for (let i = 0; i < 12; i++) {
+  let totalNotes = sub === 1 ? 10 : 15; // 基礎10個，進階15組
+
+  for (let i = 0; i < totalNotes; i++) {
+    let targetArrivalTime = millis() + currentTimeOffset;
+    
+    // 產生第一個音符
+    let gIdx1 = spawnNote(targetArrivalTime, noteTravelTime, -1);
+
+    // 如果是進階關，有機率產生第二個同時掉落的音符
+    if (sub === 2 && random() < 0.4) {
+      spawnNote(targetArrivalTime, noteTravelTime, gIdx1);
+    }
+
+    // 難度曲線
+    let baseInterval = sub === 1 ? map(i, 0, totalNotes-1, 3000, 2000) : map(i, 0, totalNotes-1, 2200, 1200);
+    currentTimeOffset += baseInterval + random(-300, 300);
+  }
+}
+
+function spawnNote(targetTime, travelTime, excludedGIdx) {
     let gIdx = floor(random(gestures.length));
+    if (gIdx === excludedGIdx) gIdx = (gIdx + 1) % gestures.length;
+    
     // 將四種手勢映射到四條垂直軌道
     let trackX = map(gIdx, 0, gestures.length - 1, width * 0.2, width * 0.8);
-
-    // 難度曲線：從 2.2 秒的間隔逐漸縮短到 1.2 秒，並加上隨機波動
-    let baseInterval = map(i, 0, 11, 2200, 1200); 
-    let interval = baseInterval + random(-400, 400); 
     
-    let targetArrivalTime = millis() + currentTimeOffset;
     items.push({
       x: trackX,
-      y: -300,
-      spawnY: -300,
-      spawnTime: targetArrivalTime - noteTravelTime,
-      targetArrivalTime: targetArrivalTime,
+      y: -100,
+      spawnY: -100,
+      spawnTime: targetTime - travelTime,
+      targetArrivalTime: targetTime,
       target: gestures[gIdx],
       collected: false,
       missed: false
     });
-
-    currentTimeOffset += interval; // 累加隨機間隔到下一個音符
-  }
+    return gIdx;
 }
 
 function drawStage3() {
@@ -640,7 +715,15 @@ function drawStage3() {
     pop();
   }
 
-  let f = getGesture();
+  // 優化辨識：取得目前畫面上所有偵測到的手勢
+  let detectedGestures = hands.map(h => recognizeGesture(h));
+  
+  // 檢查是否有 3-1 結束後進入 3-2 的轉場提示
+  if (showSuccess && currentSubStage === 1) {
+    fill(0, 255, 150);
+    textSize(40);
+    text("基础達成！進階挑戰開始...", width/2, height/2);
+  }
   
   for (let item of items) {
     let now = millis();
@@ -660,8 +743,8 @@ function drawStage3() {
       let dY = abs(item.y - hitLineY);
       
       if (dY < hitThreshold) {
-        // 如果玩家比出正確手勢
-        if (f === item.target) {
+        // 如果偵測到的手勢中包含目標手勢
+        if (detectedGestures.includes(item.target)) {
           item.collected = true;
           collected++;
           combo++; // 增加連擊
@@ -669,6 +752,7 @@ function drawStage3() {
           // 連擊加分邏輯：連續成功時分數翻倍 (10 -> 20)
           let pointsAwarded = (combo >= 2) ? 20 : 10;
           score += pointsAwarded;
+          stage3Score += pointsAwarded;
           
           // 觸發星星特效
           starEffect.active = true;
@@ -742,15 +826,32 @@ function drawStage3() {
 
   // 檢查是否全部音符都處理完了
   let finished = items.every(item => item.collected || item.missed);
-  if (finished && !gameOver) {
-    gameOver = true;
-    finalScore = score;
-    let hitRate = collected / items.length;
-    if (hitRate >= 0.9) finalRating = "Excellent!";
-    else if (hitRate >= 0.7) finalRating = "Good!";
-    else finalRating = "Bad!";
-    stage = 7; // 進入遊戲結束畫面
+  if (finished && !gameOver && !showSuccess) {
+    if (currentSubStage === 1) {
+      if (stage3Score >= 40) {
+        showSuccess = true;
+        successTime = millis();
+        setTimeout(() => {
+          startStage3(2); // 進入進階關
+        }, 1500);
+      } else {
+        // 沒達標直接結束
+        endGame();
+      }
+    } else {
+      endGame();
+    }
   }
+}
+
+function endGame() {
+  gameOver = true;
+  finalScore = score;
+  let hitRate = collected / items.length;
+  if (hitRate >= 0.9) finalRating = "Excellent!";
+  else if (hitRate >= 0.7) finalRating = "Good!";
+  else finalRating = "Bad!";
+  stage = 7;
 }
 
 // ================= GAME OVER =================
@@ -800,6 +901,7 @@ function resetGame() {
   problemCount = 0;
   gameOver = false;
   showSuccess = false;
+  currentSubStage = 1;
 }
 
 // ================= UI =================
@@ -814,7 +916,7 @@ function drawUI() {
   text("✨ 分數：" + score, 30, 30);
   
   // 轉換顯示關卡 (讓說明面不影響關卡數字)
-  let displayStage = stage === 0 ? 0 : (stage <= 2 ? 1 : (stage <= 4 ? 2 : 3));
+  let displayStage = stage === 0 ? 0 : (stage <= 2 ? 1 : (stage <= 4 ? 2 : (stage === 6 ? "3-" + currentSubStage : 3)));
   text("🏆 關卡：" + displayStage, 30, 65); //
   drawingContext.shadowBlur = 0;
   textAlign(CENTER, CENTER);
